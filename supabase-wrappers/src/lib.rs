@@ -20,7 +20,7 @@
 //! ...
 //!
 //! [dependencies]
-//! pgrx = "=0.9.8"
+//! pgrx = "=0.11.2"
 //! supabase-wrappers = "0.1"
 //! ```
 //!
@@ -66,7 +66,7 @@
 //! use pgrx::PgSqlErrorCode;
 //! use supabase_wrappers::prelude::*;
 //! #[wrappers_fdw(
-//!    version = "0.1.0",
+//!    version = "0.1.1",
 //!    author = "Supabase",
 //!    website = "https://github.com/supabase/wrappers/tree/main/wrappers/src/fdw/helloworld_fdw",
 //!    error_type = "HelloWorldFdwError"
@@ -75,7 +75,7 @@
 //!     //row counter
 //!     row_cnt: i64,
 //!
-//!     // target column name list
+//!     // target column list
 //!     tgt_cols: Vec<Column>,
 //! }
 //!
@@ -87,9 +87,11 @@
 //!     }
 //! }
 //!
+//! type HelloWorldFdwResult<T> = Result<T, HelloWorldFdwError>;
+//!
 //! impl ForeignDataWrapper<HelloWorldFdwError> for HelloWorldFdw {
-//!     fn new(options: &HashMap<String, String>) -> Result<Self, HelloWorldFdwError> {
-//!         // 'options' is the key-value pairs defined in `CREATE SERVER` SQL, for example,
+//!     fn new(server: ForeignServer) -> HelloWorldFdwResult<Self> {
+//!         // 'server.options' is the key-value pairs defined in `CREATE SERVER` SQL, for example,
 //!         //
 //!         // create server my_helloworld_server
 //!         //   foreign data wrapper wrappers_helloworld
@@ -108,17 +110,17 @@
 //!         })
 //!     }
 //!
-//!     fn begin_scan(&mut self, quals: &[Qual], columns: &[Column], sorts: &[Sort], limit: &Option<Limit>, options: &HashMap<String, String>) -> Result<(), HelloWorldFdwError> {
+//!     fn begin_scan(&mut self, quals: &[Qual], columns: &[Column], sorts: &[Sort], limit: &Option<Limit>, options: &HashMap<String, String>) -> HelloWorldFdwResult<()> {
 //!         // Do any initilization
 //!         Ok(())
 //!     }
 //!
-//!     fn iter_scan(&mut self, row: &mut Row) -> Result<Option<()>, HelloWorldFdwError> {
+//!     fn iter_scan(&mut self, row: &mut Row) -> HelloWorldFdwResult<Option<()>> {
 //!         // Return None when done
 //!         Ok(None)
 //!     }
 //!
-//!     fn end_scan(&mut self) -> Result<(), HelloWorldFdwError> {
+//!     fn end_scan(&mut self) -> HelloWorldFdwResult<()> {
 //!         // Cleanup any resources
 //!         Ok(())
 //!     }
@@ -170,7 +172,7 @@
 //! }
 //!
 //! impl ForeignDataWrapper<HelloWorldFdwError> for HelloWorldFdw {
-//!     fn new(options: &HashMap<String, String>) -> Result<Self, HelloWorldFdwError> {
+//!     fn new(server: ForeignServer) -> Result<Self, HelloWorldFdwError> {
 //!         Ok(Self {
 //!             row_cnt: 0,
 //!             tgt_cols: Vec::new(),
@@ -286,21 +288,29 @@
 //! - [Airtable](https://github.com/supabase/wrappers/tree/main/wrappers/src/fdw/airtable_fdw): A FDW for [Airtable](https://airtable.com/) API which supports data read only.
 //! - [S3](https://github.com/supabase/wrappers/tree/main/wrappers/src/fdw/s3_fdw): A FDW for [AWS S3](https://aws.amazon.com/s3/) which supports data read only.
 //! - [Logflare](https://github.com/supabase/wrappers/tree/main/wrappers/src/fdw/logflare_fdw): A FDW for [Logflare](https://logflare.app/) which supports data read only.
+//! - [Auth0](https://github.com/supabase/wrappers/tree/main/wrappers/src/fdw/auth0_fdw): A FDW for [Auth0](https://auth0.com/) which supports data read only.
+//! - [SQL Server](https://github.com/supabase/wrappers/tree/main/wrappers/src/fdw/mssql_fdw): A FDW for [Microsoft SQL Server](https://www.microsoft.com/en-au/sql-server/) which supports data read only.
+//! - [Redis](https://github.com/supabase/wrappers/tree/main/wrappers/src/fdw/redis_fdw): A FDW for [Redis](https://redis.io/) which supports data read only.
 
 pub mod interface;
+pub mod options;
 pub mod utils;
 
 /// The prelude includes all necessary imports to make Wrappers work
 pub mod prelude {
+    pub use crate::import_foreign_schema::*;
+    pub use crate::instance::ForeignServer;
     pub use crate::interface::*;
+    pub use crate::options::*;
     pub use crate::utils::*;
     pub use crate::wrappers_fdw;
-    pub use ::tokio::runtime::Runtime;
+    pub use tokio::runtime::Runtime;
 }
 
 use pgrx::prelude::*;
 use pgrx::AllocatedByPostgres;
 
+mod import_foreign_schema;
 mod instance;
 mod limit;
 mod memctx;

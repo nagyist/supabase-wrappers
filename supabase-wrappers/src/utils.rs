@@ -2,12 +2,11 @@
 //!
 
 use crate::interface::{Cell, Column, Row};
-use pgrx::pg_sys::panic::ErrorReport;
+use pgrx::pg_sys::panic::{ErrorReport, ErrorReportable};
 use pgrx::prelude::PgBuiltInOids;
 use pgrx::spi::Spi;
 use pgrx::IntoDatum;
 use pgrx::*;
-use std::collections::HashMap;
 use std::ffi::CStr;
 use std::num::NonZeroUsize;
 use std::ptr;
@@ -155,55 +154,9 @@ pub fn create_async_runtime() -> Result<Runtime, CreateRuntimeError> {
     Ok(Builder::new_current_thread().enable_all().build()?)
 }
 
-/// Get required option value from the `options` map
+/// Get decrypted secret from Vault by secret ID
 ///
-/// Get the required option's value from `options` map, return None and report
-/// error and stop current transaction if it does not exist.
-///
-/// For example,
-///
-/// ```rust,no_run
-/// # use supabase_wrappers::prelude::require_option;
-/// # use std::collections::HashMap;
-/// # let options = &HashMap::new();
-/// require_option("my_option", options);
-/// ```
-pub fn require_option(opt_name: &str, options: &HashMap<String, String>) -> Option<String> {
-    options.get(opt_name).map(|t| t.to_owned()).or_else(|| {
-        report_error(
-            PgSqlErrorCode::ERRCODE_FDW_OPTION_NAME_NOT_FOUND,
-            &format!("required option \"{}\" is not specified", opt_name),
-        );
-        None
-    })
-}
-
-/// Get required option value from the `options` map or a provided default
-///
-/// Get the required option's value from `options` map, return default if it does not exist.
-///
-/// For example,
-///
-/// ```rust,no_run
-/// # use supabase_wrappers::prelude::require_option_or;
-/// # use std::collections::HashMap;
-/// # let options = &HashMap::new();
-/// require_option_or("my_option", options, "default value".to_string());
-/// ```
-pub fn require_option_or(
-    opt_name: &str,
-    options: &HashMap<String, String>,
-    default: String,
-) -> String {
-    options
-        .get(opt_name)
-        .map(|t| t.to_owned())
-        .unwrap_or(default)
-}
-
-/// Get decrypted secret from Vault
-///
-/// Get decrypted secret as string from Vault. Vault is an extension for storing
+/// Get decrypted secret as string from Vault by secret ID. Vault is an extension for storing
 /// encrypted secrets, [see more details](https://github.com/supabase/vault).
 pub fn get_vault_secret(secret_id: &str) -> Option<String> {
     match Uuid::try_parse(secret_id) {
@@ -216,11 +169,11 @@ pub fn get_vault_secret(secret_id: &str) -> Option<String> {
                     pgrx::Uuid::from_bytes(sid).into_datum(),
                 )],
             ) {
-                Ok(sid) => sid,
+                Ok(decrypted) => decrypted,
                 Err(err) => {
                     report_error(
                         PgSqlErrorCode::ERRCODE_FDW_ERROR,
-                        &format!("invalid secret id \"{}\": {}", secret_id, err),
+                        &format!("query vault failed \"{}\": {}", secret_id, err),
                     );
                     None
                 }
@@ -236,19 +189,24 @@ pub fn get_vault_secret(secret_id: &str) -> Option<String> {
     }
 }
 
-// convert options definition to hashmap
-pub(super) unsafe fn options_to_hashmap(options: *mut pg_sys::List) -> HashMap<String, String> {
-    let mut ret = HashMap::new();
-    let options: PgList<pg_sys::DefElem> = PgList::from_pg(options);
-    for option in options.iter_ptr() {
-        let name = CStr::from_ptr((*option).defname);
-        let value = CStr::from_ptr(pg_sys::defGetString(option));
-        ret.insert(
-            name.to_str().unwrap().to_owned(),
-            value.to_str().unwrap().to_owned(),
-        );
+/// Get decrypted secret from Vault by secret name
+///
+/// Get decrypted secret as string from Vault by secret name. Vault is an extension for storing
+/// encrypted secrets, [see more details](https://github.com/supabase/vault).
+pub fn get_vault_secret_by_name(secret_name: &str) -> Option<String> {
+    match Spi::get_one_with_args::<String>(
+        "select decrypted_secret from vault.decrypted_secrets where name = $1",
+        vec![(PgBuiltInOids::TEXTOID.oid(), secret_name.into_datum())],
+    ) {
+        Ok(decrypted) => decrypted,
+        Err(err) => {
+            report_error(
+                PgSqlErrorCode::ERRCODE_FDW_ERROR,
+                &format!("query vault failed \"{}\": {}", secret_name, err),
+            );
+            None
+        }
     }
-    ret
 }
 
 pub(super) unsafe fn tuple_table_slot_to_row(slot: *mut pg_sys::TupleTableSlot) -> Row {
@@ -305,7 +263,7 @@ pub(super) unsafe fn extract_target_columns(
     // get column names from var list
     let col_vars: PgList<pg_sys::Var> = PgList::from_pg(col_vars);
     for var in col_vars.iter_ptr() {
-        let rte = pg_sys::planner_rt_fetch((*var).varno as u32, root);
+        let rte = pg_sys::planner_rt_fetch((*var).varno as _, root);
         let attno = (*var).varattno;
         let attname = pg_sys::get_attname((*rte).relid, attno, true);
         if !attname.is_null() {
@@ -325,23 +283,6 @@ pub(super) unsafe fn extract_target_columns(
     }
 
     ret
-}
-
-/// Check if the option list contains a specific option, used in [validator](crate::interface::ForeignDataWrapper::validator)
-pub fn check_options_contain(opt_list: &[Option<String>], tgt: &str) {
-    let search_key = tgt.to_owned() + "=";
-    if !opt_list.iter().any(|opt| {
-        if let Some(s) = opt {
-            s.starts_with(&search_key)
-        } else {
-            false
-        }
-    }) {
-        report_error(
-            PgSqlErrorCode::ERRCODE_FDW_OPTION_NAME_NOT_FOUND,
-            &format!("required option \"{}\" is not specified", tgt),
-        );
-    }
 }
 
 // trait for "serialize" and "deserialize" state from specified memory context,
@@ -384,5 +325,19 @@ pub(super) trait SerdeList {
         let cst = list.head().unwrap();
         let ptr = i64::from_datum((*cst).constvalue, (*cst).constisnull).unwrap();
         PgBox::<Self>::from_pg(ptr as _)
+    }
+}
+
+pub(crate) trait ReportableError {
+    type Output;
+
+    fn report_unwrap(self) -> Self::Output;
+}
+
+impl<T, E: Into<ErrorReport>> ReportableError for Result<T, E> {
+    type Output = T;
+
+    fn report_unwrap(self) -> Self::Output {
+        self.map_err(|e| e.into()).unwrap_or_report()
     }
 }

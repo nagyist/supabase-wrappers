@@ -7,27 +7,26 @@ on:
     tags:
       - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
 
+permissions:
+  contents: write
+
 jobs:
   release:
     name: Create Release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Create Release
         id: create_release
-        uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: ${{ github.ref }}
-          body: |
-            Changes in this Release
-            - First Change
-            - Second Change
-          draft: false
-          prerelease: false
+          tag: ${{ github.ref_name }}
+        run: |
+          gh release create "$tag" \
+              --repo="$GITHUB_REPOSITORY" \
+              --title="${tag}" \
+              --generate-notes
 
   build-linux-gnu:
     name: release artifacts
@@ -38,17 +37,20 @@ jobs:
         extension_name:
           - wrappers
         pgrx_version:
-          - 0.9.8
-        postgres: [14, 15]
+          - 0.12.6
+        postgres: [14, 15, 16, 17]
         features:
           - "all_fdws"
         box:
           - { runner: ubuntu-20.04, arch: amd64 }
           - { runner: arm-runner, arch: arm64 }
     runs-on: ${{ matrix.box.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v3
+      - name: checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: build release artifacts
         run: |
@@ -86,24 +88,21 @@ jobs:
 
           # Extension version and path
           extension_version=${{ github.ref_name }}
-          extension_dir=target/release/${{ matrix.extension_name }}-pg${{ matrix.postgres }}/usr/share/postgresql/${{ matrix.postgres }}/extension
+          extension_dir=../target/release/${{ matrix.extension_name }}-pg${{ matrix.postgres }}/usr/share/postgresql/${{ matrix.postgres }}/extension
           # strip the leading v
           deb_version=${extension_version:1}
 
           # copy schema file to version update sql files
-          # Note: some version numbers may be skipped
-          cp ${extension_dir}/${{ matrix.extension_name }}--${deb_version}.sql ${extension_dir}/${{ matrix.extension_name }}--0.1.6--${deb_version}.sql
-          cp ${extension_dir}/${{ matrix.extension_name }}--${deb_version}.sql ${extension_dir}/${{ matrix.extension_name }}--0.1.7--${deb_version}.sql
-          cp ${extension_dir}/${{ matrix.extension_name }}--${deb_version}.sql ${extension_dir}/${{ matrix.extension_name }}--0.1.8--${deb_version}.sql
-          cp ${extension_dir}/${{ matrix.extension_name }}--${deb_version}.sql ${extension_dir}/${{ matrix.extension_name }}--0.1.9--${deb_version}.sql
-          cp ${extension_dir}/${{ matrix.extension_name }}--${deb_version}.sql ${extension_dir}/${{ matrix.extension_name }}--0.1.10--${deb_version}.sql
-          cp ${extension_dir}/${{ matrix.extension_name }}--${deb_version}.sql ${extension_dir}/${{ matrix.extension_name }}--0.1.11--${deb_version}.sql
-          cp ${extension_dir}/${{ matrix.extension_name }}--${deb_version}.sql ${extension_dir}/${{ matrix.extension_name }}--0.1.14--${deb_version}.sql
-          cp ${extension_dir}/${{ matrix.extension_name }}--${deb_version}.sql ${extension_dir}/${{ matrix.extension_name }}--0.1.15--${deb_version}.sql
+          for tag in $(git tag -l "v*"); do
+            if [[ $tag != $extension_version ]]; then
+              prev_version=${tag:1}
+              cp ${extension_dir}/${{ matrix.extension_name }}--${deb_version}.sql ${extension_dir}/${{ matrix.extension_name }}--${prev_version}--${deb_version}.sql
+            fi
+          done
 
           # Create installable package
           mkdir archive
-          cp `find target/release -type f -name "${{ matrix.extension_name }}*"` archive
+          cp `find ../target/release -type f -name "${{ matrix.extension_name }}*"` archive
 
           # name of the package directory before packaging
           package_dir=${{ matrix.extension_name }}-${{ github.ref_name }}-pg${{ matrix.postgres }}-${{ matrix.box.arch }}-linux-gnu

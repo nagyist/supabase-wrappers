@@ -1,6 +1,13 @@
 use crate::prelude::*;
 use pgrx::pg_sys::Oid;
-use pgrx::{is_a, list::PgList, pg_sys, pg_sys::Datum, FromDatum, PgBuiltInOids, PgOid};
+use pgrx::{
+    datum::{Array, Date, JsonB, Timestamp},
+    is_a,
+    list::PgList,
+    pg_sys,
+    pg_sys::Datum,
+    FromDatum, PgBuiltInOids, PgOid,
+};
 use std::ffi::CStr;
 use std::os::raw::c_int;
 
@@ -12,44 +19,97 @@ pub(crate) unsafe fn form_array_from_datum(
     is_null: bool,
     typoid: pg_sys::Oid,
 ) -> Option<Vec<Cell>> {
-    if is_null {
-        return None;
-    }
-
     let oid = PgOid::from(typoid);
     match oid {
         PgOid::BuiltIn(PgBuiltInOids::BOOLARRAYOID) => {
-            Vec::<Cell>::from_polymorphic_datum(datum, false, pg_sys::BOOLOID)
+            Array::<bool>::from_polymorphic_datum(datum, is_null, pg_sys::BOOLOID).map(|arr| {
+                arr.iter()
+                    .filter(|v| v.is_some())
+                    .map(|v| Cell::Bool(v.expect("non-null array element")))
+                    .collect::<Vec<_>>()
+            })
         }
         PgOid::BuiltIn(PgBuiltInOids::CHARARRAYOID) => {
-            Vec::<Cell>::from_polymorphic_datum(datum, false, pg_sys::CHAROID)
+            Array::<i8>::from_polymorphic_datum(datum, is_null, pg_sys::CHAROID).map(|arr| {
+                arr.iter()
+                    .filter(|v| v.is_some())
+                    .map(|v| Cell::I8(v.expect("non-null array element")))
+                    .collect::<Vec<_>>()
+            })
         }
         PgOid::BuiltIn(PgBuiltInOids::INT2ARRAYOID) => {
-            Vec::<Cell>::from_polymorphic_datum(datum, false, pg_sys::INT2OID)
+            Array::<i16>::from_polymorphic_datum(datum, is_null, pg_sys::INT2OID).map(|arr| {
+                arr.iter()
+                    .filter(|v| v.is_some())
+                    .map(|v| Cell::I16(v.expect("non-null array element")))
+                    .collect::<Vec<_>>()
+            })
         }
         PgOid::BuiltIn(PgBuiltInOids::FLOAT4ARRAYOID) => {
-            Vec::<Cell>::from_polymorphic_datum(datum, false, pg_sys::FLOAT4OID)
+            Array::<f32>::from_polymorphic_datum(datum, is_null, pg_sys::FLOAT4OID).map(|arr| {
+                arr.iter()
+                    .filter(|v| v.is_some())
+                    .map(|v| Cell::F32(v.expect("non-null array element")))
+                    .collect::<Vec<_>>()
+            })
         }
         PgOid::BuiltIn(PgBuiltInOids::INT4ARRAYOID) => {
-            Vec::<Cell>::from_polymorphic_datum(datum, false, pg_sys::INT4OID)
+            Array::<i32>::from_polymorphic_datum(datum, is_null, pg_sys::INT4OID).map(|arr| {
+                arr.iter()
+                    .filter(|v| v.is_some())
+                    .map(|v| Cell::I32(v.expect("non-null array element")))
+                    .collect::<Vec<_>>()
+            })
         }
         PgOid::BuiltIn(PgBuiltInOids::FLOAT8ARRAYOID) => {
-            Vec::<Cell>::from_polymorphic_datum(datum, false, pg_sys::FLOAT8OID)
+            Array::<f64>::from_polymorphic_datum(datum, is_null, pg_sys::FLOAT8OID).map(|arr| {
+                arr.iter()
+                    .filter(|v| v.is_some())
+                    .map(|v| Cell::F64(v.expect("non-null array element")))
+                    .collect::<Vec<_>>()
+            })
         }
         PgOid::BuiltIn(PgBuiltInOids::INT8ARRAYOID) => {
-            Vec::<Cell>::from_polymorphic_datum(datum, false, pg_sys::INT8OID)
+            Array::<i64>::from_polymorphic_datum(datum, is_null, pg_sys::INT8OID).map(|arr| {
+                arr.iter()
+                    .filter(|v| v.is_some())
+                    .map(|v| Cell::I64(v.expect("non-null array element")))
+                    .collect::<Vec<_>>()
+            })
         }
         PgOid::BuiltIn(PgBuiltInOids::TEXTARRAYOID) => {
-            Vec::<Cell>::from_polymorphic_datum(datum, false, pg_sys::TEXTOID)
+            Array::<String>::from_polymorphic_datum(datum, is_null, pg_sys::TEXTOID).map(|arr| {
+                arr.iter()
+                    .filter(|v| v.is_some())
+                    .map(|v| Cell::String(v.expect("non-null array element")))
+                    .collect::<Vec<_>>()
+            })
         }
         PgOid::BuiltIn(PgBuiltInOids::DATEARRAYOID) => {
-            Vec::<Cell>::from_polymorphic_datum(datum, false, pg_sys::DATEOID)
+            Array::<Date>::from_polymorphic_datum(datum, is_null, pg_sys::DATEOID).map(|arr| {
+                arr.iter()
+                    .filter(|v| v.is_some())
+                    .map(|v| Cell::Date(v.expect("non-null array element")))
+                    .collect::<Vec<_>>()
+            })
         }
         PgOid::BuiltIn(PgBuiltInOids::TIMESTAMPARRAYOID) => {
-            Vec::<Cell>::from_polymorphic_datum(datum, false, pg_sys::TIMESTAMPOID)
+            Array::<Timestamp>::from_polymorphic_datum(datum, is_null, pg_sys::TIMESTAMPOID).map(
+                |arr| {
+                    arr.iter()
+                        .filter(|v| v.is_some())
+                        .map(|v| Cell::Timestamp(v.expect("non-null array element")))
+                        .collect::<Vec<_>>()
+                },
+            )
         }
         PgOid::BuiltIn(PgBuiltInOids::JSONBARRAYOID) => {
-            Vec::<Cell>::from_polymorphic_datum(datum, false, pg_sys::JSONBOID)
+            Array::<JsonB>::from_polymorphic_datum(datum, is_null, pg_sys::JSONBOID).map(|arr| {
+                arr.iter()
+                    .filter(|v| v.is_some())
+                    .map(|v| Cell::Json(v.expect("non-null array element")))
+                    .collect::<Vec<_>>()
+            })
         }
         _ => None,
     }
@@ -57,12 +117,12 @@ pub(crate) unsafe fn form_array_from_datum(
 
 pub(crate) unsafe fn get_operator(opno: pg_sys::Oid) -> pg_sys::Form_pg_operator {
     let htup = pg_sys::SearchSysCache1(
-        pg_sys::SysCacheIdentifier_OPEROID.try_into().unwrap(),
-        opno.try_into().unwrap(),
+        pg_sys::SysCacheIdentifier::OPEROID.try_into().unwrap(),
+        opno.into(),
     );
     if htup.is_null() {
         pg_sys::ReleaseSysCache(htup);
-        pgrx::error!("cache lookup operator {} failed", opno);
+        pgrx::error!("cache lookup operator {:?} failed", opno);
     }
     let op = pg_sys::GETSTRUCT(htup) as pg_sys::Form_pg_operator;
     pg_sys::ReleaseSysCache(htup);
@@ -70,9 +130,9 @@ pub(crate) unsafe fn get_operator(opno: pg_sys::Oid) -> pg_sys::Form_pg_operator
 }
 
 pub(crate) unsafe fn unnest_clause(node: *mut pg_sys::Node) -> *mut pg_sys::Node {
-    if is_a(node, pg_sys::NodeTag_T_RelabelType) {
+    if is_a(node, pg_sys::NodeTag::T_RelabelType) {
         (*(node as *mut pg_sys::RelabelType)).arg as _
-    } else if is_a(node, pg_sys::NodeTag_T_ArrayCoerceExpr) {
+    } else if is_a(node, pg_sys::NodeTag::T_ArrayCoerceExpr) {
         (*(node as *mut pg_sys::ArrayCoerceExpr)).arg as _
     } else {
         node
@@ -105,20 +165,20 @@ pub(crate) unsafe fn extract_from_op_expr(
     let mut right = unnest_clause(args.tail().unwrap());
 
     // swap operands if needed
-    if is_a(right, pg_sys::NodeTag_T_Var)
-        && !is_a(left, pg_sys::NodeTag_T_Var)
+    if is_a(right, pg_sys::NodeTag::T_Var)
+        && !is_a(left, pg_sys::NodeTag::T_Var)
         && (*opr).oprcom != Oid::INVALID
     {
         std::mem::swap(&mut left, &mut right);
     }
 
-    if is_a(left, pg_sys::NodeTag_T_Var) {
+    if is_a(left, pg_sys::NodeTag::T_Var) {
         let left = left as *mut pg_sys::Var;
 
         if pg_sys::bms_is_member((*left).varno as c_int, baserel_ids) && (*left).varattno >= 1 {
             let field = pg_sys::get_attname(baserel_id, (*left).varattno, false);
 
-            let (value, param) = if is_a(right, pg_sys::NodeTag_T_Const) {
+            let (value, param) = if is_a(right, pg_sys::NodeTag::T_Const) {
                 let right = right as *mut pg_sys::Const;
                 (
                     Cell::from_polymorphic_datum(
@@ -128,7 +188,7 @@ pub(crate) unsafe fn extract_from_op_expr(
                     ),
                     None,
                 )
-            } else if is_a(right, pg_sys::NodeTag_T_Param) {
+            } else if is_a(right, pg_sys::NodeTag::T_Param) {
                 // add a dummy value if this is query parameter, the actual value
                 // will be extracted from execution state
                 let right = right as *mut pg_sys::Param;
@@ -166,13 +226,13 @@ pub(crate) unsafe fn extract_from_null_test(
     expr: *mut pg_sys::NullTest,
 ) -> Option<Qual> {
     let var = (*expr).arg as *mut pg_sys::Var;
-    if !is_a(var as _, pg_sys::NodeTag_T_Var) || (*var).varattno < 1 {
+    if !is_a(var as _, pg_sys::NodeTag::T_Var) || (*var).varattno < 1 {
         return None;
     }
 
     let field = pg_sys::get_attname(baserel_id, (*var).varattno, false);
 
-    let opname = if (*expr).nulltesttype == pg_sys::NullTestType_IS_NULL {
+    let opname = if (*expr).nulltesttype == pg_sys::NullTestType::IS_NULL {
         "is".to_string()
     } else {
         "is not".to_string()
@@ -212,7 +272,7 @@ pub(crate) unsafe fn extract_from_scalar_array_op_expr(
     let left = unnest_clause(args.head().unwrap());
     let right = unnest_clause(args.tail().unwrap());
 
-    if is_a(left, pg_sys::NodeTag_T_Var) && is_a(right, pg_sys::NodeTag_T_Const) {
+    if is_a(left, pg_sys::NodeTag::T_Var) && is_a(right, pg_sys::NodeTag::T_Const) {
         let left = left as *mut pg_sys::Var;
         let right = right as *mut pg_sys::Const;
 
@@ -278,7 +338,7 @@ pub(crate) unsafe fn extract_from_bool_expr(
 ) -> Option<Qual> {
     let args: PgList<pg_sys::Node> = PgList::from_pg((*expr).args);
 
-    if (*expr).boolop != pg_sys::BoolExprType_NOT_EXPR || args.len() != 1 {
+    if (*expr).boolop != pg_sys::BoolExprType::NOT_EXPR || args.len() != 1 {
         return None;
     }
 
@@ -303,6 +363,36 @@ pub(crate) unsafe fn extract_from_bool_expr(
     Some(qual)
 }
 
+pub(crate) unsafe fn extract_from_boolean_test(
+    baserel_id: pg_sys::Oid,
+    expr: *mut pg_sys::BooleanTest,
+) -> Option<Qual> {
+    let var = (*expr).arg as *mut pg_sys::Var;
+    if !is_a(var as _, pg_sys::NodeTag::T_Var) || (*var).varattno < 1 {
+        return None;
+    }
+
+    let field = pg_sys::get_attname(baserel_id, (*var).varattno, false);
+
+    let (opname, value) = match (*expr).booltesttype {
+        pg_sys::BoolTestType::IS_TRUE => ("is".to_string(), true),
+        pg_sys::BoolTestType::IS_FALSE => ("is".to_string(), false),
+        pg_sys::BoolTestType::IS_NOT_TRUE => ("is not".to_string(), true),
+        pg_sys::BoolTestType::IS_NOT_FALSE => ("is not".to_string(), false),
+        _ => return None,
+    };
+
+    let qual = Qual {
+        field: CStr::from_ptr(field).to_str().unwrap().to_string(),
+        operator: opname,
+        value: Value::Cell(Cell::Bool(value)),
+        use_or: false,
+        param: None,
+    };
+
+    Some(qual)
+}
+
 pub(crate) unsafe fn extract_quals(
     root: *mut pg_sys::PlannerInfo,
     baserel: *mut pg_sys::RelOptInfo,
@@ -313,16 +403,18 @@ pub(crate) unsafe fn extract_quals(
     let conds = PgList::<pg_sys::RestrictInfo>::from_pg((*baserel).baserestrictinfo);
     for cond in conds.iter_ptr() {
         let expr = (*cond).clause as *mut pg_sys::Node;
-        let extracted = if is_a(expr, pg_sys::NodeTag_T_OpExpr) {
+        let extracted = if is_a(expr, pg_sys::NodeTag::T_OpExpr) {
             extract_from_op_expr(root, baserel_id, (*baserel).relids, expr as _)
-        } else if is_a(expr, pg_sys::NodeTag_T_NullTest) {
+        } else if is_a(expr, pg_sys::NodeTag::T_NullTest) {
             extract_from_null_test(baserel_id, expr as _)
-        } else if is_a(expr, pg_sys::NodeTag_T_ScalarArrayOpExpr) {
+        } else if is_a(expr, pg_sys::NodeTag::T_ScalarArrayOpExpr) {
             extract_from_scalar_array_op_expr(root, baserel_id, (*baserel).relids, expr as _)
-        } else if is_a(expr, pg_sys::NodeTag_T_Var) {
+        } else if is_a(expr, pg_sys::NodeTag::T_Var) {
             extract_from_var(root, baserel_id, (*baserel).relids, expr as _)
-        } else if is_a(expr, pg_sys::NodeTag_T_BoolExpr) {
+        } else if is_a(expr, pg_sys::NodeTag::T_BoolExpr) {
             extract_from_bool_expr(root, baserel_id, (*baserel).relids, expr as _)
+        } else if is_a(expr, pg_sys::NodeTag::T_BooleanTest) {
+            extract_from_boolean_test(baserel_id, expr as _)
         } else {
             if let Some(stm) = pgrx::nodes::node_to_string(expr) {
                 report_warning(&format!("unsupported qual: {}", stm));

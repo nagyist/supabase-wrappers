@@ -75,6 +75,7 @@ pub fn wrappers_fdw(attr: TokenStream, item: TokenStream) -> TokenStream {
     let fn_ident = format_ident!("{}_handler", ident_snake);
     let fn_validator_ident = format_ident!("{}_validator", ident_snake);
     let fn_meta_ident = format_ident!("{}_meta", ident_snake);
+    let fn_get_meta_ident = format_ident!("{}_get_meta", ident_snake);
 
     let quoted = quote! {
         #item_tokens
@@ -95,7 +96,13 @@ pub fn wrappers_fdw(attr: TokenStream, item: TokenStream) -> TokenStream {
             fn #fn_validator_ident(options: Vec<Option<String>>, catalog: Option<pg_sys::Oid>) {
                 #ident::validator(options, catalog)
                     .map_err(|e| <super::#error_type_ident as Into<ErrorReport>>::into(e))
-                    .report();
+                    .unwrap_or_report();
+            }
+
+            pub(super) fn #fn_get_meta_ident() -> HashMap<String, String> {
+                let mut meta: HashMap<String, String> = HashMap::new();
+                #metas
+                meta
             }
 
             #[pg_extern(create_or_replace)]
@@ -105,9 +112,7 @@ pub fn wrappers_fdw(attr: TokenStream, item: TokenStream) -> TokenStream {
                 name!(author, Option<String>),
                 name!(website, Option<String>)
             )> {
-                let mut meta: HashMap<String, String> = HashMap::new();
-
-                #metas
+                let meta = #fn_get_meta_ident();
 
                 TableIterator::new(vec![(
                     Some(#ident_str.to_owned()),
