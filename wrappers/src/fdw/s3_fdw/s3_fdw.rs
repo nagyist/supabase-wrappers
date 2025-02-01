@@ -1,10 +1,9 @@
 use crate::stats;
 use async_compression::tokio::bufread::{BzDecoder, GzipDecoder, XzDecoder, ZlibDecoder};
+use aws_config::BehaviorVersion;
 use aws_sdk_s3 as s3;
 use http::Uri;
 use pgrx::pg_sys;
-use pgrx::pg_sys::panic::ErrorReport;
-use pgrx::prelude::PgSqlErrorCode;
 use serde_json::{self, Value as JsonValue};
 use std::collections::{HashMap, VecDeque};
 use std::env;
@@ -15,6 +14,8 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 use super::parquet::*;
 use supabase_wrappers::prelude::*;
 
+use super::{S3FdwError, S3FdwResult};
+
 // record parser for a S3 file
 enum Parser {
     Csv(csv::Reader<Cursor<Vec<u8>>>),
@@ -24,7 +25,7 @@ enum Parser {
 }
 
 #[wrappers_fdw(
-    version = "0.1.2",
+    version = "0.1.4",
     author = "Supabase",
     website = "https://github.com/supabase/wrappers/tree/main/wrappers/src/fdw/s3_fdw",
     error_type = "S3FdwError"
@@ -42,7 +43,7 @@ pub(crate) struct S3Fdw {
 }
 
 impl S3Fdw {
-    const FDW_NAME: &str = "S3Fdw";
+    const FDW_NAME: &'static str = "S3Fdw";
 
     // local string line buffer size, in bytes
     // Note: this is not a hard limit, just an indication of full buffer
@@ -53,9 +54,9 @@ impl S3Fdw {
     // Returns:
     //   Some - still have records to read
     //   None - no more records
-    fn refill(&mut self) -> Option<()> {
+    fn refill(&mut self) -> S3FdwResult<Option<()>> {
         if !self.buf.is_empty() {
-            return Some(());
+            return Ok(Some(()));
         }
 
         if let Some(ref mut rdr) = self.rdr {
@@ -63,21 +64,11 @@ impl S3Fdw {
             let mut total_lines = 0;
             let mut total_bytes = 0;
             loop {
-                match self.rt.block_on(rdr.read_line(&mut self.buf)) {
-                    Ok(num_bytes) => {
-                        total_lines += 1;
-                        total_bytes += num_bytes;
-                        if num_bytes == 0 || self.buf.len() > Self::BUF_SIZE {
-                            break;
-                        }
-                    }
-                    Err(err) => {
-                        report_error(
-                            PgSqlErrorCode::ERRCODE_FDW_ERROR,
-                            &format!("fetch query result failed: {}", err),
-                        );
-                        return None;
-                    }
+                let num_bytes = self.rt.block_on(rdr.read_line(&mut self.buf))?;
+                total_lines += 1;
+                total_bytes += num_bytes;
+                if num_bytes == 0 || self.buf.len() > Self::BUF_SIZE {
+                    break;
                 }
             }
 
@@ -86,7 +77,7 @@ impl S3Fdw {
         }
 
         if self.buf.is_empty() {
-            return None;
+            return Ok(None);
         }
 
         match &mut self.parser {
@@ -106,38 +97,26 @@ impl S3Fdw {
                     .collect::<Vec<&str>>()
                     .join(",");
                 let json_str = format!("{{ \"rows\": [{}] }}", s.trim_end_matches(','));
-                match serde_json::from_str::<JsonValue>(&json_str) {
-                    Ok(rows) => {
-                        *records =
-                            VecDeque::from(rows.get("rows").unwrap().as_array().unwrap().to_vec());
-                    }
-                    Err(err) => {
-                        report_error(
-                            PgSqlErrorCode::ERRCODE_FDW_ERROR,
-                            &format!("parse json line file failed: {}", err),
-                        );
-                        return None;
-                    }
-                }
+                let rows = serde_json::from_str::<JsonValue>(&json_str)?;
+                let rows = rows
+                    .get("rows")
+                    .and_then(|arr| arr.as_array())
+                    .ok_or(S3FdwError::ReadJsonlError(json_str))?;
+                *records = VecDeque::from(rows.to_vec());
             }
             _ => unreachable!(),
         }
 
-        Some(())
-    }
-}
-
-enum S3FdwError {}
-
-impl From<S3FdwError> for ErrorReport {
-    fn from(_value: S3FdwError) -> Self {
-        ErrorReport::new(PgSqlErrorCode::ERRCODE_FDW_ERROR, "", "")
+        Ok(Some(()))
     }
 }
 
 impl ForeignDataWrapper<S3FdwError> for S3Fdw {
-    fn new(options: &HashMap<String, String>) -> Result<Self, S3FdwError> {
-        let rt = tokio::runtime::Runtime::new().unwrap();
+    fn new(server: ForeignServer) -> S3FdwResult<Self> {
+        // cannot use create_async_runtime() as the runtime needs to be created
+        // for multiple threads
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(CreateRuntimeError::FailedToCreateAsyncRuntime)?;
         let mut ret = S3Fdw {
             rt,
             client: None,
@@ -149,41 +128,43 @@ impl ForeignDataWrapper<S3FdwError> for S3Fdw {
         };
 
         // get is_mock flag
-        let is_mock: bool = options.get("is_mock") == Some(&"true".to_string());
+        let is_mock: bool = server.options.get("is_mock") == Some(&"true".to_string());
 
         // get credentials
         let creds = if is_mock {
             // LocalStack uses hardcoded credentials
             Some(("test".to_string(), "test".to_string()))
         } else {
-            match options.get("vault_access_key_id") {
+            match server.options.get("vault_access_key_id") {
                 Some(vault_access_key_id) => {
                     // if using credentials stored in Vault
-                    require_option("vault_secret_access_key", options).and_then(
-                        |vault_secret_access_key| {
-                            get_vault_secret(vault_access_key_id)
-                                .zip(get_vault_secret(&vault_secret_access_key))
-                        },
-                    )
+                    let vault_secret_access_key =
+                        require_option("vault_secret_access_key", &server.options)?;
+                    get_vault_secret(vault_access_key_id)
+                        .zip(get_vault_secret(vault_secret_access_key))
                 }
                 None => {
                     // if using credentials directly specified
-                    require_option("aws_access_key_id", options)
-                        .zip(require_option("aws_secret_access_key", options))
+                    let aws_access_key_id =
+                        require_option("aws_access_key_id", &server.options)?.to_string();
+                    let aws_secret_access_key =
+                        require_option("aws_secret_access_key", &server.options)?.to_string();
+                    Some((aws_access_key_id, aws_secret_access_key))
                 }
             }
         };
-        if creds.is_none() {
+
+        let Some(creds) = creds else {
             return Ok(ret);
-        }
-        let creds = creds.unwrap();
+        };
 
         // get region
         let default_region = "us-east-1".to_string();
         let region = if is_mock {
             default_region
         } else {
-            options
+            server
+                .options
                 .get("aws_region")
                 .map(|t| t.to_owned())
                 .unwrap_or(default_region)
@@ -193,19 +174,45 @@ impl ForeignDataWrapper<S3FdwError> for S3Fdw {
         env::set_var("AWS_ACCESS_KEY_ID", creds.0);
         env::set_var("AWS_SECRET_ACCESS_KEY", creds.1);
         env::set_var("AWS_REGION", region);
-        let config = ret.rt.block_on(aws_config::load_from_env());
+
+        let mut config_loader = aws_config::defaults(BehaviorVersion::latest());
+
+        // endpoint_url not supported as env var in rust https://github.com/awslabs/aws-sdk-rust/issues/932
+        if let Some(endpoint_url) = server.options.get("endpoint_url") {
+            if endpoint_url.ends_with('/') {
+                config_loader = config_loader.endpoint_url(endpoint_url);
+            } else {
+                config_loader = config_loader.endpoint_url(format!("{}/", endpoint_url));
+            };
+        }
+
+        // get path_style_url flag
+        //
+        // path style has been deprecated, but other s3-compatible services are
+        // still using it.
+        //
+        // Examples:
+        // path_style: https://s3.amazonaws.com/bucket/image.png
+        // virtual-hosted style: https://bucket.s3.amazonaws.com/image.png
+        //
+        // ref: https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html
+        let path_style_url: bool =
+            server.options.get("path_style_url") == Some(&"true".to_string());
+
+        let config = ret.rt.block_on(config_loader.load());
 
         stats::inc_stats(Self::FDW_NAME, stats::Metric::CreateTimes, 1);
 
         // create S3 client
+        let mut s3_config_builder = s3::config::Builder::from(&config);
         let client = if is_mock {
-            let mut s3_config_builder = s3::config::Builder::from(&config);
             s3_config_builder = s3_config_builder
                 .endpoint_url("http://localhost:4566/")
                 .force_path_style(true);
             s3::Client::from_conf(s3_config_builder.build())
         } else {
-            s3::Client::new(&config)
+            s3_config_builder = s3_config_builder.force_path_style(path_style_url);
+            s3::Client::from_conf(s3_config_builder.build())
         };
         ret.client = Some(client);
 
@@ -219,34 +226,23 @@ impl ForeignDataWrapper<S3FdwError> for S3Fdw {
         _sorts: &[Sort],
         _limit: &Option<Limit>,
         options: &HashMap<String, String>,
-    ) -> Result<(), S3FdwError> {
+    ) -> S3FdwResult<()> {
         // extract s3 bucket and object path from uri option
-        let (bucket, object) = if let Some(uri) = require_option("uri", options) {
-            match uri.parse::<Uri>() {
-                Ok(uri) => {
-                    if uri.scheme_str() != Option::Some("s3")
-                        || uri.host().is_none()
-                        || uri.path().is_empty()
-                    {
-                        report_error(
-                            PgSqlErrorCode::ERRCODE_FDW_ERROR,
-                            &format!("invalid s3 uri: {}", uri),
-                        );
-                        return Ok(());
-                    }
-                    // exclude 1st "/" char in the path as s3 object path doesn't like it
-                    (uri.host().unwrap().to_owned(), uri.path()[1..].to_string())
-                }
-                Err(err) => {
-                    report_error(
-                        PgSqlErrorCode::ERRCODE_FDW_ERROR,
-                        &format!("parse s3 uri failed: {}", err),
-                    );
-                    return Ok(());
-                }
+        let (bucket, object) = {
+            let uri = require_option("uri", options)?.parse::<Uri>()?;
+            if uri.scheme_str() != Option::Some("s3")
+                || uri.host().is_none()
+                || uri.path().is_empty()
+            {
+                return Err(S3FdwError::InvalidS3Uri(uri.to_string()));
             }
-        } else {
-            return Ok(());
+            // exclude 1st "/" char in the path as s3 object path doesn't like it
+            (
+                uri.host()
+                    .expect("host is not None as tested in if condition above")
+                    .to_owned(),
+                uri.path()[1..].to_string(),
+            )
         };
 
         let has_header: bool = options.get("has_header") == Some(&"true".to_string());
@@ -255,42 +251,20 @@ impl ForeignDataWrapper<S3FdwError> for S3Fdw {
 
         if let Some(client) = &self.client {
             // initialise parser according to format option
-            if let Some(format) = require_option("format", options) {
-                // create dummy parser
-                match format.as_str() {
-                    "csv" => {
-                        self.parser = Parser::Csv(csv::Reader::from_reader(Cursor::new(vec![0])))
-                    }
-                    "jsonl" => self.parser = Parser::JsonLine(VecDeque::new()),
-                    "parquet" => self.parser = Parser::Parquet(S3Parquet::default()),
-                    _ => {
-                        report_error(
-                            PgSqlErrorCode::ERRCODE_FDW_ERROR,
-                            &format!(
-                                "invalid format option: {}, it can only be 'csv', 'jsonl' or 'parquet'",
-                                format
-                            ),
-                        );
-                        return Ok(());
-                    }
-                }
-            } else {
-                return Ok(());
-            };
+            let format = require_option("format", options)?;
+            // create dummy parser
+            match format {
+                "csv" => self.parser = Parser::Csv(csv::Reader::from_reader(Cursor::new(vec![0]))),
+                "jsonl" => self.parser = Parser::JsonLine(VecDeque::new()),
+                "parquet" => self.parser = Parser::Parquet(S3Parquet::default()),
+                _ => return Err(S3FdwError::InvalidFormatOption(format.to_string())),
+            }
 
-            let stream = match self
+            let stream = self
                 .rt
-                .block_on(client.get_object().bucket(&bucket).key(&object).send())
-            {
-                Ok(resp) => resp.body.into_async_read(),
-                Err(err) => {
-                    report_error(
-                        PgSqlErrorCode::ERRCODE_FDW_ERROR,
-                        &format!("request s3 failed: {}", err),
-                    );
-                    return Ok(());
-                }
-            };
+                .block_on(client.get_object().bucket(&bucket).key(&object).send())?
+                .body
+                .into_async_read();
 
             let mut boxed_stream: Pin<Box<dyn AsyncRead>> =
                 if let Some(compress) = options.get("compress") {
@@ -300,13 +274,7 @@ impl ForeignDataWrapper<S3FdwError> for S3Fdw {
                         "gzip" => Box::pin(GzipDecoder::new(buf_rdr)),
                         "xz" => Box::pin(XzDecoder::new(buf_rdr)),
                         "zlib" => Box::pin(ZlibDecoder::new(buf_rdr)),
-                        _ => {
-                            report_error(
-                                PgSqlErrorCode::ERRCODE_FDW_ERROR,
-                                &format!("invalid compression option: {}", compress),
-                            );
-                            return Ok(());
-                        }
+                        _ => return Err(S3FdwError::InvalidCompressOption(compress.to_string())),
                     }
                 } else {
                     Box::pin(stream)
@@ -321,7 +289,7 @@ impl ForeignDataWrapper<S3FdwError> for S3Fdw {
                     self.rt
                         .block_on(boxed_stream.read_to_end(&mut buf))
                         .expect("read compressed parquet file failed");
-                    self.rt.block_on(s3parquet.open_local_stream(buf));
+                    self.rt.block_on(s3parquet.open_local_stream(buf))?;
                 } else {
                     // open async read stream
                     self.rt.block_on(s3parquet.open_async_stream(
@@ -329,7 +297,7 @@ impl ForeignDataWrapper<S3FdwError> for S3Fdw {
                         &bucket,
                         &object,
                         &self.tgt_cols,
-                    ));
+                    ))?;
                 }
                 return Ok(());
             }
@@ -340,13 +308,7 @@ impl ForeignDataWrapper<S3FdwError> for S3Fdw {
             if let Parser::Csv(_) = self.parser {
                 if has_header {
                     let mut header = String::new();
-                    if let Err(err) = self.rt.block_on(rdr.read_line(&mut header)) {
-                        report_error(
-                            PgSqlErrorCode::ERRCODE_FDW_ERROR,
-                            &format!("fetch csv file failed: {}", err),
-                        );
-                        return Ok(());
-                    }
+                    self.rt.block_on(rdr.read_line(&mut header))?;
                 }
             }
 
@@ -356,13 +318,13 @@ impl ForeignDataWrapper<S3FdwError> for S3Fdw {
         Ok(())
     }
 
-    fn iter_scan(&mut self, row: &mut Row) -> Result<Option<()>, S3FdwError> {
+    fn iter_scan(&mut self, row: &mut Row) -> S3FdwResult<Option<()>> {
         // read parquet record
         if let Parser::Parquet(ref mut s3parquet) = &mut self.parser {
-            if self.rt.block_on(s3parquet.refill()).is_none() {
+            if self.rt.block_on(s3parquet.refill())?.is_none() {
                 return Ok(None);
             }
-            let ret = s3parquet.read_into_row(row, &self.tgt_cols);
+            let ret = s3parquet.read_into_row(row, &self.tgt_cols)?;
             if ret.is_some() {
                 self.rows_out += 1;
             } else {
@@ -373,7 +335,7 @@ impl ForeignDataWrapper<S3FdwError> for S3Fdw {
 
         // read csv or jsonl record
         loop {
-            if self.refill().is_none() {
+            if self.refill()?.is_none() {
                 break;
             }
 
@@ -381,28 +343,17 @@ impl ForeignDataWrapper<S3FdwError> for S3Fdw {
             match &mut self.parser {
                 Parser::Csv(rdr) => {
                     let mut record = csv::StringRecord::new();
-                    match rdr.read_record(&mut record) {
-                        Ok(result) => {
-                            if result {
-                                for col in &self.tgt_cols {
-                                    let cell =
-                                        record.get(col.num - 1).map(|s| Cell::String(s.to_owned()));
-                                    row.push(&col.name, cell);
-                                }
-                                self.rows_out += 1;
-                                return Ok(Some(()));
-                            } else {
-                                // no more records left in the local buffer, refill from remote
-                                self.buf.clear();
-                            }
+                    let result = rdr.read_record(&mut record)?;
+                    if result {
+                        for col in &self.tgt_cols {
+                            let cell = record.get(col.num - 1).map(|s| Cell::String(s.to_owned()));
+                            row.push(&col.name, cell);
                         }
-                        Err(err) => {
-                            report_error(
-                                PgSqlErrorCode::ERRCODE_FDW_ERROR,
-                                &format!("read csv record failed: {}", err),
-                            );
-                            break;
-                        }
+                        self.rows_out += 1;
+                        return Ok(Some(()));
+                    } else {
+                        // no more records left in the local buffer, refill from remote
+                        self.buf.clear();
                     }
                 }
                 Parser::JsonLine(records) => {
@@ -450,21 +401,18 @@ impl ForeignDataWrapper<S3FdwError> for S3Fdw {
         Ok(None)
     }
 
-    fn end_scan(&mut self) -> Result<(), S3FdwError> {
+    fn end_scan(&mut self) -> S3FdwResult<()> {
         // release local resources
         self.rdr.take();
         self.parser = Parser::JsonLine(VecDeque::new());
         Ok(())
     }
 
-    fn validator(
-        options: Vec<Option<String>>,
-        catalog: Option<pg_sys::Oid>,
-    ) -> Result<(), S3FdwError> {
+    fn validator(options: Vec<Option<String>>, catalog: Option<pg_sys::Oid>) -> S3FdwResult<()> {
         if let Some(oid) = catalog {
             if oid == FOREIGN_TABLE_RELATION_ID {
-                check_options_contain(&options, "uri");
-                check_options_contain(&options, "format");
+                check_options_contain(&options, "uri")?;
+                check_options_contain(&options, "format")?;
             }
         }
 

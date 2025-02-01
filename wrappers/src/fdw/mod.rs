@@ -21,3 +21,18 @@ mod s3_fdw;
 
 #[cfg(feature = "logflare_fdw")]
 mod logflare_fdw;
+
+#[cfg(feature = "auth0_fdw")]
+mod auth0_fdw;
+
+#[cfg(feature = "mssql_fdw")]
+mod mssql_fdw;
+
+#[cfg(feature = "redis_fdw")]
+mod redis_fdw;
+
+#[cfg(feature = "cognito_fdw")]
+mod cognito_fdw;
+
+#[cfg(feature = "wasm_fdw")]
+mod wasm_fdw;

@@ -1,46 +1,180 @@
 [package]
 name = "wrappers"
-version = "0.1.16"
+version = "0.4.4"
 edition = "2021"
+publish = false
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "pgrx_embed_wrappers"
+path = "./src/bin/pgrx_embed.rs"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(pgrx_embed)'] }
 
 [features]
-default = [ "cshim", "pg15" ]
-cshim = [ "pgrx/cshim" ]
-pg11 = ["pgrx/pg11", "pgrx-tests/pg11", "supabase-wrappers/pg11" ]
-pg12 = ["pgrx/pg12", "pgrx-tests/pg12", "supabase-wrappers/pg12" ]
-pg13 = ["pgrx/pg13", "pgrx-tests/pg13", "supabase-wrappers/pg13" ]
-pg14 = ["pgrx/pg14", "pgrx-tests/pg14", "supabase-wrappers/pg14" ]
-pg15 = ["pgrx/pg15", "pgrx-tests/pg15", "supabase-wrappers/pg15" ]
+default = ["pg15"]
+pg12 = ["pgrx/pg12", "pgrx-tests/pg12", "supabase-wrappers/pg12"]
+pg13 = ["pgrx/pg13", "pgrx-tests/pg13", "supabase-wrappers/pg13"]
+pg14 = ["pgrx/pg14", "pgrx-tests/pg14", "supabase-wrappers/pg14"]
+pg15 = ["pgrx/pg15", "pgrx-tests/pg15", "supabase-wrappers/pg15"]
+pg16 = ["pgrx/pg16", "pgrx-tests/pg16", "supabase-wrappers/pg16"]
+pg17 = ["pgrx/pg17", "pgrx-tests/pg17", "supabase-wrappers/pg17"]
 pg_test = []
 
 helloworld_fdw = []
-bigquery_fdw = ["gcp-bigquery-client", "serde_json", "serde", "wiremock", "futures", "yup-oauth2", "thiserror"]
-clickhouse_fdw = ["clickhouse-rs", "chrono", "chrono-tz", "regex", "thiserror"]
-stripe_fdw = ["reqwest", "reqwest-middleware", "reqwest-retry", "serde_json", "thiserror"]
-firebase_fdw = ["reqwest", "reqwest-middleware", "reqwest-retry", "serde_json", "yup-oauth2", "regex", "thiserror"]
-s3_fdw = [
-    "reqwest", "reqwest-middleware", "reqwest-retry", "aws-config", "aws-sdk-s3",
-    "tokio", "tokio-util", "csv", "async-compression", "serde_json",
-    "http", "parquet", "futures", "arrow-array", "chrono"
+bigquery_fdw = [
+    "gcp-bigquery-client",
+    "serde_json",
+    "serde",
+    "wiremock",
+    "futures",
+    "yup-oauth2",
+    "thiserror",
 ]
-airtable_fdw = ["reqwest", "reqwest-middleware", "reqwest-retry", "serde_json", "serde", "url", "thiserror"]
-logflare_fdw = ["reqwest", "reqwest-middleware", "reqwest-retry", "serde_json", "thiserror"]
-
+clickhouse_fdw = ["clickhouse-rs", "chrono", "chrono-tz", "regex", "thiserror", "either"]
+stripe_fdw = [
+    "http",
+    "reqwest",
+    "reqwest-middleware",
+    "reqwest-retry",
+    "serde_json",
+    "thiserror",
+    "url",
+]
+firebase_fdw = [
+    "reqwest",
+    "reqwest-middleware",
+    "reqwest-retry",
+    "serde_json",
+    "yup-oauth2",
+    "regex",
+    "thiserror",
+]
+s3_fdw = [
+    "reqwest",
+    "reqwest-middleware",
+    "reqwest-retry",
+    "aws-config",
+    "aws-sdk-s3",
+    "tokio",
+    "tokio-util",
+    "csv",
+    "async-compression",
+    "serde_json",
+    "http",
+    "parquet",
+    "futures",
+    "arrow-array",
+    "chrono",
+    "thiserror",
+]
+airtable_fdw = [
+    "reqwest",
+    "reqwest-middleware",
+    "reqwest-retry",
+    "serde_json",
+    "serde",
+    "url",
+    "thiserror",
+]
+cognito_fdw = [
+    "aws-sdk-cognitoidentityprovider",
+    "aws-config",
+    "reqwest",
+    "reqwest-middleware",
+    "reqwest-retry",
+    "http",
+    "serde_json",
+    "tokio",
+    "serde",
+    "url",
+    "thiserror",
+]
+logflare_fdw = [
+    "http",
+    "reqwest",
+    "reqwest-middleware",
+    "reqwest-retry",
+    "serde_json",
+    "thiserror",
+    "url",
+]
+auth0_fdw = [
+    "reqwest",
+    "reqwest-middleware",
+    "reqwest-retry",
+    "http",
+    "serde_json",
+    "serde",
+    "url",
+    "thiserror",
+]
+mssql_fdw = [
+    "tiberius",
+    "tokio",
+    "tokio-util",
+    "num-traits",
+    "thiserror",
+]
+redis_fdw = [
+    "redis",
+    "serde_json",
+    "thiserror",
+]
+wasm_fdw = [
+    "wasmtime",
+    "warg-client",
+    "warg-protocol",
+    "chrono",
+    "dirs",
+    "sha2",
+    "hex",
+    "thiserror",
+    "anyhow",
+    "reqwest",
+    "reqwest-middleware",
+    "reqwest-retry",
+    "semver",
+    "serde",
+    "serde_json",
+    "jwt-simple",
+    "bytes",
+]
 # Does not include helloworld_fdw because of its general uselessness
-all_fdws = ["airtable_fdw", "bigquery_fdw", "clickhouse_fdw", "stripe_fdw", "firebase_fdw", "s3_fdw", "logflare_fdw"]
+native_fdws = [
+    "airtable_fdw",
+    "bigquery_fdw",
+    "clickhouse_fdw",
+    "stripe_fdw",
+    "firebase_fdw",
+    "s3_fdw",
+    "logflare_fdw",
+    "auth0_fdw",
+    "mssql_fdw",
+    "redis_fdw",
+    "cognito_fdw",
+]
+all_fdws = [
+    "native_fdws",
+    "wasm_fdw",
+]
 
 [dependencies]
-pgrx = { version = "=0.9.8" }
+pgrx = { version = "=0.12.9" }
 #supabase-wrappers = "0.1"
 supabase-wrappers = { path = "../supabase-wrappers", default-features = false }
 
 # for clickhouse_fdw
-clickhouse-rs = { git = "https://github.com/suharev7/clickhouse-rs", branch = "async-await", features = ["tls"], optional = true }
+clickhouse-rs = { git = "https://github.com/suharev7/clickhouse-rs", rev = "abfe517101eefe36bfdb7da248690659aa284ad3", features = [
+    "tls",
+], optional = true }
 chrono = { version = "0.4", optional = true }
 chrono-tz = { version = "0.6", optional = true }
+either = { version = "1.12.0", optional = true }
+
 
 # for bigquery_fdw, firebase_fdw, airtable_fdw and etc.
 gcp-bigquery-client = { version = "0.17.0", optional = true }
@@ -50,7 +184,7 @@ wiremock = { version = "0.5", optional = true }
 futures = { version = "0.3", optional = true }
 
 # for stripe_fdw, firebase_fdw, logflare_fdw and etc.
-reqwest = { version = "0.11.20", features = ["json"], optional = true }
+reqwest = { version = "0.11.20", features = ["json", "gzip"], optional = true }
 reqwest-middleware = { version = "0.2.3", optional = true }
 reqwest-retry = { version = "0.2.2", optional = true }
 
@@ -58,31 +192,60 @@ reqwest-retry = { version = "0.2.2", optional = true }
 yup-oauth2 = { version = "8.0.0", optional = true }
 regex = { version = "1", optional = true }
 
-# for airtable_fdw
+# for airtable_fdw, stripe_fdw
 url = { version = "2.3", optional = true }
 
 # for s3_fdw
-aws-config = { version = "0.56.1", optional = true }
-aws-sdk-s3 = { version = "0.30.0", optional = true }
+aws-config = { version = "1.1.7", features = ["behavior-version-latest"], optional = true }
+aws-sdk-s3 = { version = "1.45.0", optional = true }
+
+# for cognito fdw
+aws-sdk-cognitoidentityprovider = { version ="1.60.0", optional = true }
+
 csv = { version = "1.2", optional = true }
 tokio = { version = "1", features = ["full"], optional = true }
-tokio-util = { version = "0.7", optional = true }
-async-compression = { version = "0.3.15", features = ["tokio", "bzip2", "gzip", "xz", "zlib"], optional = true }
+tokio-util = { version = "0.7", features = ["full"], optional = true }
+async-compression = { version = "0.3.15", features = [
+    "tokio",
+    "bzip2",
+    "gzip",
+    "xz",
+    "zlib",
+], optional = true }
 http = { version = "0.2", optional = true }
-parquet = { version = "41.0.0", features = ["async"], optional = true }
-arrow-array = { version = "41.0.0", optional = true }
+parquet = { version = "52.2.0", features = ["async"], optional = true }
+arrow-array = { version = "52.2.0", optional = true }
 
+# for mssql_fdw
+tiberius = { version = "0.12.2", features = [
+    "tds73",
+    "native-tls",
+    "chrono",
+    "rust_decimal",
+], optional = true }
+num-traits = { version = "0.2.17", optional = true }
+
+# for redis_fdw
+redis = { version = "0.27.5", features = ["streams", "tls-rustls", "tls-rustls-insecure"], optional = true }
+
+# for wasm_fdw
+wasmtime = { version = "26.0.1", features = [
+    "runtime",
+    "cranelift",
+    "component-model",
+], default-features = false, optional = true }
+warg-client = { version = "0.7.0", optional = true }
+warg-protocol = { version = "0.7.0", optional = true }
+semver = { version = "1.0.23", optional = true }
+jwt-simple = { version = "0.12.9", default-features = false, features = [
+    "pure-rust"
+], optional = true }
+dirs = { version = "5.0.1", optional = true }
+sha2 = { version = "0.10.8", optional = true }
+hex = { version = "0.4.3", optional = true }
+bytes = { version = "1.9.0", optional = true }
 thiserror = { version = "1.0.48", optional = true }
+anyhow  = { version = "1.0.81", optional = true }
 
 [dev-dependencies]
-pgrx-tests = "=0.9.8"
-
-[profile.dev]
-panic = "unwind"
-lto = "thin"
-
-[profile.release]
-panic = "unwind"
-opt-level = 3
-lto = "fat"
-codegen-units = 1
+pgrx-tests = "=0.12.9"

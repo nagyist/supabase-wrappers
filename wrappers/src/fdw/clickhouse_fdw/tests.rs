@@ -9,7 +9,7 @@ mod tests {
     #[pg_test]
     fn clickhouse_smoketest() {
         Spi::connect(|mut c| {
-            let clickhouse_pool = ch::Pool::new("tcp://default:@localhost:9000/supa");
+            let clickhouse_pool = ch::Pool::new("tcp://default:@localhost:9000/default");
 
             let rt = create_async_runtime().expect("failed to create runtime");
             let mut handle = rt
@@ -17,11 +17,11 @@ mod tests {
                 .expect("handle");
 
             rt.block_on(async {
+                handle.execute("DROP TABLE IF EXISTS test_table").await?;
                 handle
-                    .execute("DROP TABLE IF EXISTS supa.test_table")
-                    .await?;
-                handle
-                    .execute("CREATE TABLE supa.test_table (id INT, name TEXT) engine = Memory")
+                    .execute(
+                        "CREATE TABLE test_table (id Int64, name Nullable(TEXT)) engine = Memory",
+                    )
                     .await
             })
             .expect("test_table in ClickHouse");
@@ -37,7 +37,7 @@ mod tests {
                 r#"CREATE SERVER my_clickhouse_server
                          FOREIGN DATA WRAPPER clickhouse_wrapper
                          OPTIONS (
-                           conn_string 'tcp://default:@localhost:9000/supa'
+                           conn_string 'tcp://default:@localhost:9000/default'
                          )"#,
                 None,
                 None,
@@ -133,6 +133,18 @@ mod tests {
                     PgOid::BuiltIn(PgBuiltInOids::TEXTOID),
                     "test4".into_datum(),
                 )]),
+            )
+            .unwrap();
+            c.update(
+                "INSERT INTO test_table (id, name) VALUES ($1, $2)",
+                None,
+                Some(vec![
+                    (PgOid::BuiltIn(PgBuiltInOids::INT4OID), 42.into_datum()),
+                    (
+                        PgOid::BuiltIn(PgBuiltInOids::TEXTOID),
+                        None::<String>.into_datum(),
+                    ),
+                ]),
             )
             .unwrap();
             assert_eq!(
@@ -232,10 +244,10 @@ mod tests {
                 "test3"
             );
 
-            let remote_value: String = rt
+            let remote_value: Option<String> = rt
                 .block_on(async {
                     handle
-                        .query("SELECT name FROM supa.test_table ORDER BY name LIMIT 1")
+                        .query("SELECT name FROM test_table ORDER BY name LIMIT 1")
                         .fetch_all()
                         .await?
                         .rows()
@@ -244,7 +256,7 @@ mod tests {
                         .get("name")
                 })
                 .expect("value");
-            assert_eq!(remote_value, "test");
+            assert_eq!(remote_value, Some("test".to_string()));
         });
     }
 }
